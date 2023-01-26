@@ -1,7 +1,6 @@
 from django.db import models
-## import User model
 from django.contrib.auth.models import User
-# Create your models here.
+
 class Task(models.Model):
     title = models.CharField(max_length=255)
     description = models.TextField()
@@ -19,3 +18,15 @@ class Comment(models.Model):
 
     def __str__(self):
         return self.text
+
+class Timer(models.Model):
+    start_time = models.DateTimeField(auto_now_add=False)
+    end_time = models.DateTimeField(auto_now_add=False, null=True, blank=True)
+    task = models.ForeignKey(Task, on_delete=models.CASCADE)
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+
+class TimerLog(models.Model):
+    start_time = models.DateTimeField(auto_now_add=False)
+    end_time = models.DateTimeField(auto_now_add=False)
+    task = models.ForeignKey(Task, on_delete=models.CASCADE)
+    user = models.ForeignKey(User, on_delete=models.CASCADE)

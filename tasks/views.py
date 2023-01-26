@@ -1,10 +1,14 @@
+from datetime import datetime, timedelta
+
+import pytz
 from django.contrib.auth.models import User
 from rest_framework import generics
 from rest_framework.response import Response
 from rest_framework.generics import GenericAPIView
-from .models import Task, Comment
+from .models import Task, Comment, Timer, TimerLog
 from .serializers import TaskSerializer, TaskSerializerWithUser, TaskSerializerTitle, TaskSerializerDescription, \
-    CommentSerializer, CommentSerializerText
+    CommentSerializer, CommentSerializerText, TimerSerializer, AddTimerLogSerializer, TimerLogSerializer, \
+    TaskSerializerDuration
 from .utils import send_email
 
 
@@ -56,11 +60,23 @@ class CompletedTaskListView(GenericAPIView):
         return Response({'message': 'No tasks found'})
 
 
-class TaskListView(generics.ListAPIView):
+class TaskListView(GenericAPIView):
     serializer_class = TaskSerializerTitle
 
-    def get_queryset(self):
-        return Task.objects.all()
+    def get(self, request):
+        tasks = Task.objects.all()
+        serialized_task = TaskSerializerTitle(tasks, many=True)
+        for i in range(len(tasks)):
+            timers = TimerLog.objects.filter(task=tasks[i])
+            total_duration = 0
+            for timer in timers:
+                start_time = timer.start_time
+                end_time = timer.end_time
+                duration = end_time - start_time
+                duration_in_minutes = duration.total_seconds() // 60
+                total_duration += duration_in_minutes
+            serialized_task.data[i]['duration'] = total_duration
+        return Response(serialized_task.data)
 
 
 class ModifyTaskOwnerView(GenericAPIView):
@@ -131,3 +147,102 @@ class SearchTaskView(GenericAPIView):
                 return Response(serialized_task.data)
             return Response({'message': 'No tasks found'})
         return Response({'message': 'Invalid query'})
+
+
+class TimerItemStartView(GenericAPIView):
+    def post(self, request, task_id):
+        task = Task.objects.get(id=task_id)
+        timer = Timer.objects.filter(task=task, user=request.user)
+        print(timer)
+        if len(timer) == 0:
+            timer = Timer.objects.create(task=task, start_time=datetime.now(), end_time=None, user=request.user)
+        else:
+            timer.start_time = datetime.now()
+            timer.end_time = None
+        timer.save()
+        return Response({"message": "Timer started"})
+
+
+class TimerItemStopView(GenericAPIView):
+    def post(self, request, task_id):
+        task = Task.objects.get(id=task_id)
+        timer = Timer.objects.get(task=task, user=request.user)
+        timer.stop_time = datetime.now()
+        timer.save()
+        timer_log = TimerLog.objects.create(task=task, start_time=timer.start_time, end_time=timer.stop_time,
+                                            user=request.user)
+        timer_log.save()
+        return Response({'timer_log_id': timer_log.id})
+
+
+class TimerLogItemView(GenericAPIView):
+    serializer_class = AddTimerLogSerializer
+
+    def post(self, request, task_id):
+        date = request.data.get('date')
+        date = datetime.strptime(date, '%Y-%m-%dT%H:%M:%S.%fZ')
+        duration_minutes = request.data.get('duration_minutes')
+        task = Task.objects.get(id=task_id)
+        timer_log = TimerLog.objects.create(task=task, start_time=date,
+                                            end_time=date + timedelta(minutes=duration_minutes),
+                                            user=request.user)
+        timer_log.save()
+        return Response({'timer_log_id': timer_log.id})
+
+
+class TimerLogListView(generics.ListAPIView):
+    serializer_class = TimerLogSerializer
+
+    def get_queryset(self):
+        task_id = self.kwargs['task_id']
+        return TimerLog.objects.filter(task=task_id)
+
+
+class TimerLogLastMonthView(GenericAPIView):
+
+    def get(self, request):
+        utc = pytz.UTC
+        timer_logs = TimerLog.objects.filter(user=request.user)
+        last_month = datetime.now() - timedelta(days=30)
+
+        timer_logs_last_month = [timer_log for timer_log in timer_logs
+                                 if timer_log.start_time.replace(tzinfo=utc) > last_month.replace(tzinfo=utc)]
+
+        total_duration = 0
+        for timer_log in timer_logs_last_month:
+            duration = timer_log.end_time - timer_log.start_time
+            duration_in_minutes = duration.total_seconds() // 60
+            total_duration += duration_in_minutes
+        return Response({'total_time_minutes': total_duration})
+
+
+class Top20TasksView(GenericAPIView):
+    serializer_class = TaskSerializerDuration
+
+    def get(self, request):
+        utc = pytz.UTC
+        timer_logs = TimerLog.objects.all()
+        last_month = datetime.now() - timedelta(days=30)
+        timer_logs_last_month = [timer_log for timer_log in timer_logs
+                                 if timer_log.start_time.replace(tzinfo=utc) > last_month.replace(tzinfo=utc)]
+        tasks = Task.objects.all()
+
+        tasks_duration = []
+        for task in tasks:
+            duration = 0
+            for timer_log in timer_logs_last_month:
+                if timer_log.task == task:
+                    duration += (timer_log.end_time - timer_log.start_time).total_seconds() // 60
+            tasks_duration.append({'task': task, 'duration': duration})
+        tasks_duration.sort(key=lambda x: x['duration'])
+        tasks_duration = tasks_duration[:20]
+
+        tasks = [task_duration['task'] for task_duration in tasks_duration]
+        serialized_tasks = TaskSerializerTitle(tasks, many=True)
+
+        for task in serialized_tasks.data:
+            for task_duration in tasks_duration:
+                if task_duration['task'].id == task['id']:
+                    task['duration'] = task_duration['duration']
+
+        return Response(serialized_tasks.data)
