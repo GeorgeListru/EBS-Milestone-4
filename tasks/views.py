@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 
 import pytz
 from django.contrib.auth.models import User
+from django.utils import timezone
 from rest_framework import generics
 from rest_framework.response import Response
 from rest_framework.generics import GenericAPIView
@@ -21,7 +22,7 @@ class CreateTaskItemView(GenericAPIView):
         user = request.user
         task = Task.objects.create(title=title, description=description, user=user)
         task.save()
-        return Response({'task_id': task.id})
+        return Response({'task_id': task.id}, status=201)
 
 
 class TaskItemView(GenericAPIView):
@@ -35,7 +36,7 @@ class TaskItemView(GenericAPIView):
     def delete(self, request, task_id):
         task = Task.objects.get(id=task_id)
         task.delete()
-        return Response({'message': 'Task deleted'})
+        return Response({'message': 'Task deleted'}, status=204)
 
 
 class UserTaskListView(GenericAPIView):
@@ -116,18 +117,18 @@ class AddCommentView(GenericAPIView):
     def post(self, request, task_id):
         text = request.data.get('text')
         task = Task.objects.get(id=task_id)
-        comment = Comment.objects.create(text=text, task=task)
+        user = request.user
+        comment = Comment.objects.create(text=text, task=task, user=user)
         comment.save()
 
-        user = task.user
-        if user.email != request.user.email:
+        if user.email:
             title = "You have a new comment"
             message = "You have a new comment by " + request.user.first_name + " " + request.user.last_name + " on task: " + task.title
             message += ". Comment: " + text
             name = user.first_name + " " + user.last_name
             send_email(name, title, message, user.email)
 
-        return Response({'comment_id': comment.id})
+        return Response({'comment_id': comment.id}, status=201)
 
 
 class CommentsListView(generics.ListAPIView):
@@ -152,12 +153,11 @@ class SearchTaskView(GenericAPIView):
 class TimerItemStartView(GenericAPIView):
     def post(self, request, task_id):
         task = Task.objects.get(id=task_id)
-        timer = Timer.objects.filter(task=task, user=request.user)
-        print(timer)
-        if len(timer) == 0:
-            timer = Timer.objects.create(task=task, start_time=datetime.now(), end_time=None, user=request.user)
+        timer = Timer.objects.get(task=task, user=request.user)
+        if not timer:
+            timer = Timer.objects.create(task=task, start_time=timezone.now(), end_time=None, user=request.user)
         else:
-            timer.start_time = datetime.now()
+            timer.start_time = timezone.now()
             timer.end_time = None
         timer.save()
         return Response({"message": "Timer started"})
@@ -167,7 +167,7 @@ class TimerItemStopView(GenericAPIView):
     def post(self, request, task_id):
         task = Task.objects.get(id=task_id)
         timer = Timer.objects.get(task=task, user=request.user)
-        timer.stop_time = datetime.now()
+        timer.stop_time = timezone.now()
         timer.save()
         timer_log = TimerLog.objects.create(task=task, start_time=timer.start_time, end_time=timer.stop_time,
                                             user=request.user)
@@ -180,8 +180,11 @@ class TimerLogItemView(GenericAPIView):
 
     def post(self, request, task_id):
         date = request.data.get('date')
-        date = datetime.strptime(date, '%Y-%m-%dT%H:%M:%S.%fZ')
-        duration_minutes = request.data.get('duration_minutes')
+        try:
+            date = datetime.strptime(date, '%Y-%m-%dT%H:%M:%S.%f')
+        except ValueError:
+            date = datetime.strptime(date, '%Y-%m-%d %H:%M:%S.%f%z')
+        duration_minutes = int(request.data.get('duration_minutes'))
         task = Task.objects.get(id=task_id)
         timer_log = TimerLog.objects.create(task=task, start_time=date,
                                             end_time=date + timedelta(minutes=duration_minutes),

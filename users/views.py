@@ -30,18 +30,15 @@ class EmailTokenObtainPairView(GenericAPIView):
                 "refresh": str(refresh),
                 "access": str(refresh.access_token),
             }
+            , status=status.HTTP_200_OK
         )
-## Get list of users endpoint - user receive a list with id and full name of all users from application
+
 class UsersListView(GenericAPIView):
     permission_classes = (AllowAny,)
 
-    ## the get method should return the users list
     def get(self, request):
         users = User.objects.all()
-        print(users[0].first_name)
-        print(users)
         serialized_users = UserNamesSerializer(users, many=True)
-        print(serialized_users.data)
         return Response(serialized_users.data, status=status.HTTP_200_OK)
 
 class RegisterUserView(GenericAPIView):
@@ -55,10 +52,9 @@ class RegisterUserView(GenericAPIView):
         validated_data = request.serializer.validated_data
         password = validated_data.pop("password")
 
-        # Create user
         user = User.objects.create(
             **validated_data,
-            username = validated_data["email"],
+            username=validated_data["email"],
             is_superuser=True,
             is_staff=True,
         )
@@ -70,5 +66,6 @@ class RegisterUserView(GenericAPIView):
             {
                 "refresh": str(refresh),
                 "access": str(refresh.access_token),
-            }
+            },
+            status=200,
         )

@@ -19,10 +19,10 @@ class TestUsers(TestCase):
         response = self.client.post(
             reverse("token_register"),
             {
-                "first_name": "firstname2",
-                "last_name": "lastname2",
-                "username": "username2",
-                "password": "testpwd2",
-            },
+                "first_name": "George",
+                "last_name": "Listru",
+                "email": "george@example.com",
+                "password": "parola123"
+            }
         )
         self.assertEqual(response.status_code, 200)
